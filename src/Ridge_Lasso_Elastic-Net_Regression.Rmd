@@ -1,0 +1,263 @@
+---
+title: "Hotel Book (R.L.E. Regression)"
+author: "Mindy Li"
+date: "11/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##### Load Libraries
+```{r}
+library(rsample)  # data splitting 
+library(glmnet)   # implementing regularized regression approaches
+library(dplyr)    # basic data manipulation procedures
+library(magrittr)
+library(broom)
+library(forcats)
+library(plyr)
+library(fastDummies)
+library(MASS)
+```
+##### Load dataset
+```{r}
+Data <- read.csv("/Users/mindyli/Desktop/Fall - 1 Class/Data Science of Business/Team Project/hotel_bookings.csv")
+```
+
+# Data Cleaning 
+1. Replace all NAs in `children` with 0
+2. Drop Variables: `arrival_date_year`,`reservation_status_date`, `reservation_status`, `assigned_room_type`
+3. Assign 0 to `agent`, and `company` if contains NULL value. Assign 1 if contains any other values.
+4. In the `counntry` variables, exccept for "PRT", "GBR", "FRA", "ESP", "DEU", "ITA", "IRL", combine all other countries to "Others"
+5. One-Hot Encoding for certain variables
+```{r}
+df<-Data
+
+df$children[is.na(df$children)] <- 0
+
+dropVars <- names(df) %in% c("arrival_date_year","reservation_status_date", "reservation_status", "assigned_room_type") 
+df<- df[!dropVars]
+
+# `agent' and 'company', if they are equal to NULL, assign 0, otherwise 1
+df$agent <- ifelse(df$agent == "NULL", 0, 1)
+df$company <- ifelse(df$company == "NULL", 0, 1)
+
+'%notin%' <- Negate('%in%')
+Country = c("PRT", "GBR", "FRA", "ESP", "DEU", "ITA", "IRL") # countries with frequencys larger than 2%
+
+#combine all other countries to "Others"
+for (i in 1:nrow(df)) {
+  if(df[i,"country"] %notin% Country) {
+    df[i,"country"] = "Others"
+  }
+}
+
+df$is_canceled <- as.factor(df$is_canceled)
+
+#One-Hot Encoding
+df <- data.frame(dummy_cols(df, select_columns = c('hotel', 'arrival_date_month', 'meal', 'country', 'market_segment', 'distribution_channel', 'is_repeated_guest', 'reserved_room_type', 'deposit_type', 'customer_type', 'required_car_parking_spaces' ), remove_selected_columns = TRUE))
+```
+
+
+# Data Preparation (Train/Test)
+
+separate data into train and test dataset:
+```{r}
+set.seed(123)
+
+smp_size <- floor(0.8 * nrow(df))
+
+train_ind <- sample(seq_len(nrow(df)), size = smp_size)
+
+train <- df[train_ind, ]
+test <- df[-train_ind, ]
+
+train_x <- model.matrix(is_canceled ~ .,train)[, -1]
+train_y <- train$is_canceled
+
+test_x <- model.matrix(is_canceled ~ ., test)[, -1]
+test_y <- test$is_canceled
+```
+
+# Ridge regression
+
+##### MSE
+```{r}
+alpha0.fit <- cv.glmnet(x = train_x, y = train_y, type.measure="deviance", alpha = 0, family = "binomial") 
+alpha0.predicted <- predict(alpha0.fit, s=alpha0.fit$lambda.1se, newx=test_x, type = 'response')
+mean(( test_y - alpha0.predicted)^2)
+#[1] 0.1320844
+```
+
+##### Graphs
+```{r}
+plot(alpha0.fit, xvar="lambda", main =  "Ridge")
+```
+
+##### ROC
+```{r}
+library(pROC)
+par(pty = "s")
+roc(test_y, alpha0.predicted, plot = TRUE, legacy.axes = TRUE,percent = TRUE, xlab = "False Positive Percentage", ylab="True Positive Percentage",col="#377eb8", lwd=4,print.auc=TRUE,main =  "Ridge")
+```
+
+_______
+# Lasso Regression
+
+##### MSE
+```{r}
+alpha1.fit <- cv.glmnet(x = train_x, y = train_y, type.measure="deviance", alpha = 1, family = "binomial") 
+alpha1.predicted <- predict(alpha1.fit, s=alpha1.fit$lambda.1se, newx=test_x, type = 'response')
+mean(( test_y - alpha1.predicted)^2)
+#[1] 9.481789
+```
+
+##### Graphs
+```{r}
+plot(alpha1.fit, xvar="lambda", main = "Lasso")
+```
+
+##### ROC
+```{r}
+par(pty = "s")
+roc(test_y, alpha1.predicted, plot = TRUE, legacy.axes = TRUE,percent = TRUE, xlab = "False Positive Percentage", ylab="True Positive Percentage",col="#377eb8", lwd=4,print.auc=TRUE,main =  "Lasso")
+```
+
+________
+# Elastic-Net Regression
+
+##### MSE
+```{r}
+alpha0.5.fit <- cv.glmnet(x = train_x, y = train_y, type.measure="deviance", alpha = 0.5, family = "binomial") 
+alpha0.5.predicted <- predict(alpha0.5.fit, s=alpha0.5.fit$lambda.1se, newx=test_x, type = 'response')
+mean(( test_y - alpha0.5.predicted)^2)
+#[1] 9.927041
+```
+
+##### Graphs
+```{r}
+plot(alpha0.5.fit, xvar="lambda", main = "Elastic Net")
+```
+
+##### ROC
+```{r}
+par(pty = "s")
+roc(test_y, alpha0.5.predicted, plot = TRUE, legacy.axes = TRUE,percent = TRUE, xlab = "False Positive Percentage", ylab="True Positive Percentage",col="#377eb8", lwd=4,print.auc=TRUE,main =  "Elastic-Net")
+```
+
+_____
+# Optimum Alpha for Lowest MSE
+```{r}
+list.of.fits <-list()
+
+for(i in 0:10){
+  fit.name <- paste0("alpha", i/10)
+  
+  list.of.fits[[fit.name]] <- cv.glmnet(train_x, train_y, type.measure="deviance", alpha=i/10, family = "binomial")
+}
+```
+
+```{r}
+results <- data.frame()
+for(i in 0:10) {
+  fit.name <- paste0("alpha", i/10)
+  
+  predicted <- predict(list.of.fits[[fit.name]], s= list.of.fits[[fit.name]]$lambda.1se, newx=test_x)
+  
+  mse <- mean((test_y - predicted)^2)
+  
+  temp <- data.frame(alpha = i/10, mse=mse, fit.name=fit.name)
+  results <- rbind(results, temp)
+}
+```
+
+```{r}
+results
+```
+
+
+# Evaluation Metric Comparison
+```{r}
+library(pROC)
+#Ridge
+rocRidge <- roc(response = test_y, predictor = alpha0.predicted)
+rets <- c("threshold", "specificity", "sensitivity", "accuracy", "tn", "tp", "fn", "fp")
+ridge_bench <- coords(rocRidge,"best","threshold", ret=rets)
+ridge_bench$auc <- round(as.numeric(rocRidge$auc),3)
+#Lasso
+rocLasso <- roc(test_y, alpha1.predicted)
+lasso_bench <- coords(rocLasso,"best","threshold", ret=rets)
+lasso_bench$auc <- round(as.numeric(rocLasso$auc),3)
+#Elastic-Net
+rocElastic <- roc(test_y, alpha0.5.predicted)
+EN_bench <- coords(rocElastic,"best","threshold", ret=rets)
+EN_bench$auc <- round(as.numeric(rocElastic$auc),3)
+#Combination
+combineBench <- rbind(ridge_bench,lasso_bench,EN_bench)
+rownames(combineBench) <- c("Ridge", "Lasso", "Elastic-Net")
+combineBench
+```
+
+# Logistic Regression Model
+```{r}
+lr <- glm(is_canceled~.,data = train, family = "binomial")
+```
+
+```{r}
+summary(lr)
+
+```
+
+```{r}
+library(pROC)
+lr.predict <-predict(lr, newdata=test, type = "response")
+# ROC graph
+library(pROC)
+#lr.predict <- as.numeric(lr.predict)
+par(pty = "s")
+rocLogit <- roc(test_y, lr.predict, plot = TRUE, legacy.axes = TRUE,percent = TRUE, xlab = "False Positive Percentage", ylab="True Positive Percentage",col="#377eb8", lwd=4,print.auc=TRUE,main =  "Logistic Regression")
+
+```
+
+
+
+```{r}
+library(caret)
+library(leaps)
+
+# Stepwise regression model
+#step.model <- stepAIC(lr, direction = "both", trace = FALSE)
+stepwise.BIC <- stepAIC(lr, k=log(nrow(train)), trace = FALSE, direction = "both")
+```
+```{r}
+summary(stepwise)
+```
+
+```{r}
+summary(stepwise.BIC)
+#glm(formula = is_canceled ~ hotel + lead_time + arrival_date_month + 
+    # arrival_date_week_number + arrival_date_day_of_month + stays_in_weekend_nights + 
+    # stays_in_week_nights + adults + meal + country + market_segment + 
+    # distribution_channel + is_repeated_guest + previous_cancellations + 
+    # previous_bookings_not_canceled + booking_changes + deposit_type + 
+    # agent + company + days_in_waiting_list + customer_type + 
+    # adr + required_car_parking_spaces + total_of_special_requests, 
+    # family = "binomial", data = train)
+```
+
+```{r}
+stepwise.BIC$anova
+```
+
+
+```{r}
+library(pROC)
+step.model.predict<- predict(step.model, data = test_x, type = "response")
+roc(test_y, step.model.predict, plot = TRUE, legacy.axes = TRUE,percent = TRUE, xlab = "False Positive Percentage", ylab="True Positive Percentage",col="#377eb8", lwd=4,print.auc=TRUE,main =  "Logistic Regression")
+```
+
+
+
+

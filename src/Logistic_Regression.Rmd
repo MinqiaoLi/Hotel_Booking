@@ -1,0 +1,104 @@
+---
+title: "Hotel-Booking Logistic Regression"
+author: "Mindy Li"
+date: "11/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##### Load Libraries
+```{r}
+library(rsample)  # data splitting 
+library(glmnet)   # implementing regularized regression approaches
+library(dplyr)    # basic data manipulation procedures
+library(magrittr)
+library(broom)
+library(forcats)
+library(plyr)
+library(fastDummies)
+library(MASS)
+```
+##### Load dataset
+```{r}
+Data <- read.csv("/Users/mindyli/Desktop/Fall - 1 Class/Data Science of Business/Team Project/hotel_bookings.csv")
+```
+
+# Data Cleaning 
+1. Replace all NAs in `children` with 0
+2. Drop Variables: `arrival_date_year`,`reservation_status_date`, `reservation_status`, `assigned_room_type`
+3. Assign 0 to `agent`, and `company` if contains NULL value. Assign 1 if contains any other values.
+4. In the `counntry` variables, exccept for "PRT", "GBR", "FRA", "ESP", "DEU", "ITA", "IRL", combine all other countries to "Others"
+5. One-Hot Encoding for certain variables
+```{r}
+df<-Data
+
+df$children[is.na(df$children)] <- 0
+
+dropVars <- names(df) %in% c("arrival_date_year","reservation_status_date", "reservation_status", "assigned_room_type") 
+df<- df[!dropVars]
+
+# `agent' and 'company', if they are equal to NULL, assign 0, otherwise 1
+df$agent <- ifelse(df$agent == "NULL", 0, 1)
+df$company <- ifelse(df$company == "NULL", 0, 1)
+
+'%notin%' <- Negate('%in%')
+Country = c("PRT", "GBR", "FRA", "ESP", "DEU", "ITA", "IRL")
+
+#combine all other countries to "Others"
+for (i in 1:nrow(df)) {
+  if(df[i,"country"] %notin% Country) {
+    df[i,"country"] = "Others"
+  }
+}
+
+#One-Hot Encoding
+#df <- data.frame(dummy_cols(df, select_columns = c('hotel', 'arrival_date_month', 'meal', 'country', 'market_segment', 'distribution_channel', 'is_repeated_guest', 'reserved_room_type', 'deposit_type', 'customer_type', 'required_car_parking_spaces' ), remove_selected_columns = TRUE))
+```
+
+# Data Preparation (Train/Test)
+
+separate data into train and test dataset:
+```{r}
+set.seed(123)
+
+smp_size <- floor(0.8 * nrow(df))
+
+train_ind <- sample(seq_len(nrow(df)), size = smp_size)
+
+train <- df[train_ind, ]
+test <- df[-train_ind, ]
+
+train_x <- model.matrix(is_canceled ~ ., train)[, -1]
+train_y <- train$is_canceled 
+
+test_x <- model.matrix(is_canceled ~ ., test)[, -1]
+test_y <- test$is_canceled
+```
+
+```{r}
+lr <- lm(is_canceled ~ ., data = train)
+```
+
+```{r}
+summary(lr)
+```
+
+```{r}
+lrPred <- prediction(predict(lr, newx= test))
+```
+
+
+```{r}
+roc(test, lrPred, plot = TRUE, legacy.axes = TRUE,percent = TRUE, xlab = "False Positive Percentage", ylab="True Positive Percentage",col="#377eb8", lwd=4,print.auc=TRUE,main =  "Logistic")
+```
+
+```{r}
+lr$
+```
+
+
+
